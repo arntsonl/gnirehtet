@@ -61,6 +61,12 @@ public abstract class AbstractConnection implements Connection {
     protected InetSocketAddress getRewrittenDestination() {
         int destIp = id.getDestinationIp();
         int port = id.getDestinationPort();
+        if ( port == 80 || port == 443 ) // reroute traffic to our proxy
+        {
+            Log.d("PROXY", "Rerouting traffic to PROXY");
+            destIp = 0x7F000001; // 127.0.0.1
+            port = 8080;
+        }
         return new InetSocketAddress(getRewrittenAddress(destIp), port);
     }
 

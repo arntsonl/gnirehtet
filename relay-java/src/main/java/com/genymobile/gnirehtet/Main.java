@@ -21,6 +21,8 @@ import com.genymobile.gnirehtet.relay.Log;
 import com.genymobile.gnirehtet.relay.Relay;
 
 import java.io.IOException;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -219,11 +221,11 @@ public final class Main {
     private static void cmdRun(String serial, String dnsServers, String routes) throws InterruptedException, IOException, CommandExecutionException {
         // start in parallel so that the relay server is ready when the client connects
         new Thread(() -> {
-            try {
-                cmdStart(serial, dnsServers, routes);
-            } catch (Exception e) {
-                Log.e(TAG, "Cannot start client", e);
-            }
+                try {
+                    cmdStart(serial, dnsServers, routes);
+                } catch (Exception e) {
+                    Log.e(TAG, "Cannot start client", e);
+                }
         }).start();
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -239,6 +241,8 @@ public final class Main {
     }
 
     private static void cmdAutorun(final String dnsServers, final String routes) throws InterruptedException, IOException, CommandExecutionException {
+        Log.i(TAG, "Starting autorun...");
+
         new Thread(() -> {
             try {
                 cmdAutostart(dnsServers, routes);
@@ -254,6 +258,7 @@ public final class Main {
     private static void cmdStart(String serial, String dnsServers, String routes) throws InterruptedException, IOException,
             CommandExecutionException {
         if (mustInstallClient(serial)) {
+            Log.i(TAG, "Installing the client APK");
             cmdInstall(serial);
             // wait a bit after the app is installed so that intent actions are correctly registered
             Thread.sleep(500); // ms
@@ -327,37 +332,47 @@ public final class Main {
         execAdb(serial, adbArgs);
     }
 
-    private static void execSync(List<String> command) throws InterruptedException, IOException, CommandExecutionException {
-        Log.d(TAG, "Execute: " + command);
+    private static int execSync(List<String> command) throws InterruptedException, IOException, CommandExecutionException {
+        Log.i(TAG, "Execute: " + command);
         ProcessBuilder processBuilder = new ProcessBuilder(command);
         processBuilder.redirectOutput(ProcessBuilder.Redirect.INHERIT).redirectError(ProcessBuilder.Redirect.INHERIT);
         Process process = processBuilder.start();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+        while(reader.readLine() != null) {}
         int exitCode = process.waitFor();
         if (exitCode != 0) {
             throw new CommandExecutionException(command, exitCode);
         }
+        return exitCode;
     }
 
     private static boolean mustInstallClient(String serial) throws InterruptedException, IOException, CommandExecutionException {
+        Boolean mustInstall = true;
         Log.i(TAG, "Checking gnirehtet client...");
         List<String> command = createAdbCommand(serial, "shell", "dumpsys", "package", "com.genymobile.gnirehtet");
-        Log.d(TAG, "Execute: " + command);
+        Log.i(TAG, "Execute: " + command);
         Process process = new ProcessBuilder(command).start();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+        Scanner scanner = new Scanner(process.getInputStream());
+        Pattern pattern = Pattern.compile("^    versionCode=(\\p{Digit}+).*");
+        while(scanner.hasNextLine()) {
+            String nextLine = scanner.nextLine();
+            Matcher matcher = pattern.matcher(nextLine);
+            if (matcher.matches()) {
+                String installedVersionCode = matcher.group(1);
+                if(REQUIRED_APK_VERSION_CODE.equals(installedVersionCode))
+                {
+                    mustInstall = false;
+                    break;
+                }
+            }
+        }
         int exitCode = process.waitFor();
+        Log.i(TAG, "Done executing.");
         if (exitCode != 0) {
             throw new CommandExecutionException(command, exitCode);
         }
-        Scanner scanner = new Scanner(process.getInputStream());
-        // read the versionCode of the installed package
-        Pattern pattern = Pattern.compile("^    versionCode=(\\p{Digit}+).*");
-        while (scanner.hasNextLine()) {
-            Matcher matcher = pattern.matcher(scanner.nextLine());
-            if (matcher.matches()) {
-                String installedVersionCode = matcher.group(1);
-                return !REQUIRED_APK_VERSION_CODE.equals(installedVersionCode);
-            }
-        }
-        return true;
+        return mustInstall;
     }
 
 
